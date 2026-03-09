@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import * as https from 'https';
 
 function getTodayParam(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  // ESPN API uses US Eastern Time (UTC-5). Convert UTC to ET before extracting date.
+  const etTime = new Date(Date.now() - 5 * 60 * 60 * 1000);
+  return `${etTime.getUTCFullYear()}${String(etTime.getUTCMonth() + 1).padStart(2, '0')}${String(etTime.getUTCDate()).padStart(2, '0')}`;
 }
 
 const ESPN_SCOREBOARD_BASE =
