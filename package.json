@@ -2,8 +2,9 @@
   "name": "nba-live-score",
   "displayName": "NBA Live Score",
   "description": "Real-time NBA scores in your VS Code sidebar",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "janghoon33",
+  "icon": "media/GOAT(NOT).png",
   "repository": {
     "type": "git",
     "url": "https://github.com/Janghoon33/NBA_Live_Score_extension"
