@@ -1,0 +1,22 @@
+# Unused boilerplate subfolder
+nba-live-score-extension/
+
+# Dependencies
+node_modules/
+
+# Compiled output
+out/
+
+# Claude Code internal files
+.claude/
+
+# VS Code local settings (keep launch.json and tasks.json for dev setup)
+.vscode/settings.local.json
+
+# Build artifacts
+*.vsix
+*.js.map
+
+# OS
+.DS_Store
+Thumbs.db

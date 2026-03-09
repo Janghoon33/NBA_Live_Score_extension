@@ -1,0 +1,49 @@
+{
+  "name": "nba-live-score",
+  "displayName": "NBA Live Score",
+  "description": "Real-time NBA scores in your VS Code sidebar",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "nbaScoreView",
+          "name": "NBA Live Score"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nbaLiveScore.refresh",
+        "title": "Refresh NBA Scores",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "nbaLiveScore.refresh",
+          "when": "view == nbaScoreView",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0"
+  }
+}

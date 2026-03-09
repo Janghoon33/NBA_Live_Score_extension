@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Basketball body -->
+  <circle cx="50" cy="50" r="46" fill="#C8571B" stroke="#888" stroke-width="2"/>
+  <!-- Vertical seam -->
+  <path d="M50 4 Q65 25 65 50 Q65 75 50 96" stroke="#1a1a1a" stroke-width="3" fill="none"/>
+  <path d="M50 4 Q35 25 35 50 Q35 75 50 96" stroke="#1a1a1a" stroke-width="3" fill="none"/>
+  <!-- Horizontal seam -->
+  <path d="M4 50 Q25 35 50 35 Q75 35 96 50" stroke="#1a1a1a" stroke-width="3" fill="none"/>
+  <path d="M4 50 Q25 65 50 65 Q75 65 96 50" stroke="#1a1a1a" stroke-width="3" fill="none"/>
+</svg>
