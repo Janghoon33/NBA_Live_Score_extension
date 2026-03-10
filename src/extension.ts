@@ -12,6 +12,10 @@ const ESPN_SCOREBOARD_BASE =
 const ESPN_SUMMARY_BASE =
   'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=';
 
+// ── Intervals ─────────────────────────────────────────────────
+const SCORE_INTERVAL_MS = 20_000;  // 20s: scoreboard
+const PLAY_INTERVAL_MS  =  6_000;  // 6s: play-by-play (selected live games only)
+
 // ── Interfaces ────────────────────────────────────────────────
 interface EspnTeam {
   id: string;
@@ -86,7 +90,7 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
   // Free throws
   if (t.includes('free throw')) {
     if (t.includes('makes') || scoring) return { emoji: '☝️', label: 'FT', labelClass: 'ft' };
-    return { emoji: '☝️', label: 'FT MISS', labelClass: 'miss' };
+    return { emoji: '❌', label: 'FT MISS', labelClass: 'miss' };
   }
   // Dunks / Layups / Makes
   if (t.includes('dunk'))                    return { emoji: '💥', label: 'DUNK', labelClass: 'score' };
@@ -182,10 +186,13 @@ const T = {
 export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'nbaScoreView';
   private _view?: vscode.WebviewView;
-  private _timer?: NodeJS.Timeout;
+  private _scoreTimer?: NodeJS.Timeout;
+  private _playTimer?: NodeJS.Timeout;
   private _selectedGames: Set<string>;
   private _events: EspnEvent[] = [];
   private _playMap = new Map<string, EspnPlay[]>();
+  private _lastPlayText = new Map<string, string>(); // eventId -> most recent play text
+  private _newPlayEventIds = new Set<string>();       // games with a freshly arrived play
   private _lang: Lang;
 
   constructor(
@@ -215,7 +222,8 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     this._refresh();
 
     webviewView.onDidDispose(() => {
-      if (this._timer) { clearTimeout(this._timer); }
+      if (this._scoreTimer) { clearTimeout(this._scoreTimer); }
+      if (this._playTimer)  { clearTimeout(this._playTimer); }
     });
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
@@ -231,23 +239,44 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
   public refresh() { this._refresh(); }
 
-  private _scheduleNext(hasActiveGames: boolean) {
-    if (this._timer) { clearTimeout(this._timer); this._timer = undefined; }
+  // ── Timer helpers ────────────────────────────────────────────
+  private _scheduleScoreNext(hasActiveGames: boolean) {
+    if (this._scoreTimer) { clearTimeout(this._scoreTimer); this._scoreTimer = undefined; }
     if (hasActiveGames) {
-      this._timer = setTimeout(() => this._refresh(), 30000);
+      this._scoreTimer = setTimeout(() => this._refreshScores(), SCORE_INTERVAL_MS);
     }
   }
 
+  private _schedulePlaysNext(hasLiveSelected: boolean) {
+    if (this._playTimer) { clearTimeout(this._playTimer); this._playTimer = undefined; }
+    if (hasLiveSelected) {
+      this._playTimer = setTimeout(() => this._refreshPlays(), PLAY_INTERVAL_MS);
+    }
+  }
+
+  private _liveSelectedEvents(): EspnEvent[] {
+    return this._events.filter(
+      (e) =>
+        this._selectedGames.has(e.id) &&
+        e.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS'
+    );
+  }
+
+  // ── Toggle ────────────────────────────────────────────────────
   private async _toggleGame(eventId: string) {
     if (this._selectedGames.has(eventId)) {
       this._selectedGames.delete(eventId);
       this._playMap.delete(eventId);
+      this._lastPlayText.delete(eventId);
     } else {
       this._selectedGames.add(eventId);
-      // Fetch plays immediately if live
       const ev = this._events.find((e) => e.id === eventId);
       if (ev?.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS') {
-        this._playMap.set(eventId, await fetchPlays(eventId));
+        const plays = await fetchPlays(eventId);
+        this._playMap.set(eventId, plays);
+        this._lastPlayText.set(eventId, plays[0]?.text ?? '');
+        // Start play timer if not already running
+        if (!this._playTimer) { this._schedulePlaysNext(true); }
       }
     }
     await this._context.globalState.update('nba.selectedGames', [...this._selectedGames]);
@@ -255,28 +284,28 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     this._render();
   }
 
+  // ── Full refresh (initial + manual) ──────────────────────────
   private async _refresh() {
     if (!this._view) return;
+    if (this._scoreTimer) { clearTimeout(this._scoreTimer); this._scoreTimer = undefined; }
+    if (this._playTimer)  { clearTimeout(this._playTimer);  this._playTimer = undefined; }
     try {
       const url = ESPN_SCOREBOARD_BASE + getTodayParam();
       const data = await fetchData<EspnResponse>(url);
       this._events = data.events || [];
 
-      // Remove stale selections (from previous days)
       const validIds = new Set(this._events.map((e) => e.id));
       for (const id of this._selectedGames) {
         if (!validIds.has(id)) { this._selectedGames.delete(id); }
       }
 
-      // Fetch plays for selected live games in parallel
-      const liveSelected = this._events.filter(
-        (e) =>
-          this._selectedGames.has(e.id) &&
-          e.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS'
-      );
+      const liveSelected = this._liveSelectedEvents();
       if (liveSelected.length > 0) {
         const plays = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
-        liveSelected.forEach((e, i) => this._playMap.set(e.id, plays[i]));
+        liveSelected.forEach((e, i) => {
+          this._playMap.set(e.id, plays[i]);
+          this._lastPlayText.set(e.id, plays[i][0]?.text ?? '');
+        });
       }
 
       this._render();
@@ -284,16 +313,82 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       const hasActive = this._events.some(
         (e) => e.competitions[0]?.status?.type?.name !== 'STATUS_FINAL'
       );
-      this._scheduleNext(hasActive);
+      this._scheduleScoreNext(hasActive);
+      this._schedulePlaysNext(liveSelected.length > 0);
     } catch (err) {
       if (this._view) { this._view.webview.html = this._getErrorHtml(String(err)); }
-      this._scheduleNext(false);
+      this._scheduleScoreNext(false);
+      this._schedulePlaysNext(false);
+    }
+  }
+
+  // ── Score-only refresh (every 20s) ────────────────────────────
+  private async _refreshScores() {
+    if (!this._view) return;
+    try {
+      const url = ESPN_SCOREBOARD_BASE + getTodayParam();
+      const data = await fetchData<EspnResponse>(url);
+      this._events = data.events || [];
+
+      const validIds = new Set(this._events.map((e) => e.id));
+      for (const id of this._selectedGames) {
+        if (!validIds.has(id)) { this._selectedGames.delete(id); }
+      }
+
+      this._render();
+
+      const hasActive = this._events.some(
+        (e) => e.competitions[0]?.status?.type?.name !== 'STATUS_FINAL'
+      );
+      this._scheduleScoreNext(hasActive);
+
+      // Ensure play timer starts if live selected games appeared
+      const hasLiveSelected = this._liveSelectedEvents().length > 0;
+      if (hasLiveSelected && !this._playTimer) {
+        this._schedulePlaysNext(true);
+      }
+    } catch {
+      this._scheduleScoreNext(true);
+    }
+  }
+
+  // ── Play-only refresh (every 6s) ──────────────────────────────
+  private async _refreshPlays() {
+    if (!this._view) return;
+    try {
+      const liveSelected = this._liveSelectedEvents();
+      if (liveSelected.length === 0) {
+        this._schedulePlaysNext(false);
+        return;
+      }
+
+      const plays = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
+
+      let changed = false;
+      this._newPlayEventIds.clear();
+      liveSelected.forEach((e, i) => {
+        const newPlays = plays[i];
+        const newFirst = newPlays[0]?.text ?? '';
+        const oldFirst = this._lastPlayText.get(e.id) ?? '';
+        if (newFirst !== oldFirst) {
+          changed = true;
+          this._newPlayEventIds.add(e.id);
+          this._lastPlayText.set(e.id, newFirst);
+          this._playMap.set(e.id, newPlays);
+        }
+      });
+
+      if (changed) { this._render(); }
+      this._schedulePlaysNext(true);
+    } catch {
+      this._schedulePlaysNext(true);
     }
   }
 
   private _render() {
     if (!this._view) return;
     this._view.webview.html = this._getWebviewContent();
+    this._newPlayEventIds.clear();
   }
 
   // ── HTML ──────────────────────────────────────────────────
@@ -341,6 +436,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       const isFinal = sName === 'STATUS_FINAL';
       const isScheduled = sName === 'STATUS_SCHEDULED';
       const isSelected = this._selectedGames.has(event.id);
+      const hasNewPlay = this._newPlayEventIds.has(event.id);
 
       let statusLine1 = '';
       let statusLine2 = '';
@@ -377,7 +473,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       if (isSelected) {
         const plays = this._playMap.get(event.id) ?? [];
         if (isLive && plays.length > 0) {
-          const rows = plays.map((play) => {
+          const rows = plays.map((play, idx) => {
             const { emoji, label, labelClass } = classifyPlay(play);
             const player = getPlayerName(play);
             const period = getPlayPeriod(play);
@@ -390,16 +486,16 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             const teamAbbr = isHomePlay ? home.team.abbreviation
               : isAwayPlay ? away.team.abbreviation : '';
             const teamSide = isHomePlay ? 'home' : isAwayPlay ? 'away' : '';
+            // Slide-in animation on the newest row when a new play arrived
+            const newClass = (idx === 0 && hasNewPlay) ? ' new-play' : '';
 
-            // Clean up text: remove leading player name if we show it separately
             let desc = play.text || '';
             if (player && desc.startsWith(player)) {
               desc = desc.slice(player.length).replace(/^[\s·\-]+/, '');
             }
-            // Truncate
             if (desc.length > 45) { desc = desc.slice(0, 44) + '…'; }
 
-            return `<div class="play-row ${teamSide}">
+            return `<div class="play-row ${teamSide}${newClass}">
               ${teamLogo
                 ? `<img class="p-logo" src="${teamLogo}" title="${teamAbbr}" onerror="this.style.display='none'">`
                 : `<span class="p-logo-placeholder"></span>`}
@@ -589,6 +685,17 @@ body {
 .play-row:hover { background: #1f1f1f; }
 .play-row.home { border-left-color: #3a6ea5; }
 .play-row.away { border-left-color: #6a3a3a; }
+
+/* New play: slide down + brief amber glow */
+@keyframes newPlayIn {
+  0%   { opacity: 0; transform: translateY(-5px); background: rgba(248,160,25,0.14); }
+  50%  { opacity: 1; transform: translateY(0);    background: rgba(248,160,25,0.07); }
+  100% {                                           background: transparent; }
+}
+.play-row.new-play {
+  animation: newPlayIn 0.45s ease-out forwards;
+}
+
 .p-logo {
   width: 16px; height: 16px; object-fit: contain;
   flex-shrink: 0; margin-left: 4px;
