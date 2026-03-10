@@ -486,7 +486,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
       if (isLive) {
         cardClass = 'live';
-        statusLine1 = `Q${status.period}`;
+        if (status.period > 4) {
+          statusLine1 = isKo ? `연장${status.period - 4}` : `OT${status.period - 4}`;
+        } else {
+          statusLine1 = isKo ? `${status.period}쿼터` : `Q${status.period}`;
+        }
         statusLine2 = status.displayClock;
       } else if (isFinal) {
         cardClass = 'final';
@@ -579,25 +583,27 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
               onclick="toggle('${event.id}')"
               title="${isSelected ? t.removeGame : t.addGame}">${isSelected ? '★' : '☆'}</button>
 
-            <!-- Away -->
-            <div class="team away">
+            <!-- Away: logo + abbr -->
+            <div class="team-side">
               <img class="logo" src="${away.team.logo}" onerror="this.style.display='none'">
               <span class="abbr">${away.team.abbreviation}</span>
-              <span class="big-score">${awayScore}</span>
             </div>
 
-            <!-- Center -->
-            <div class="center-panel">
-              ${isLive ? '<span class="live-dot"></span>' : ''}
-              <span class="s1 ${cardClass}">${statusLine1}</span>
-              ${statusLine2 ? `<span class="s2">${statusLine2}</span>` : ''}
-              ${venue ? `<span class="venue">${venue}</span>` : ''}
+            <!-- Center: badge + scores + time + venue -->
+            <div class="match-center">
+              <span class="period-badge ${cardClass}">${statusLine1}</span>
+              <div class="scores-row">
+                <span class="big-score">${awayScore}</span>
+                <span class="score-sep">-</span>
+                <span class="big-score">${homeScore}</span>
+              </div>
+              ${statusLine2 ? `<span class="match-time">${statusLine2}</span>` : ''}
+              ${venue ? `<span class="match-venue">${venue}</span>` : ''}
             </div>
 
-            <!-- Home -->
-            <div class="team home">
-              <span class="big-score">${homeScore}</span>
-              <div class="home-label-wrap">
+            <!-- Home: home badge + abbr + logo -->
+            <div class="team-side home-side">
+              <div class="home-info">
                 <span class="home-badge">${t.home}</span>
                 <span class="abbr">${home.team.abbreviation}</span>
               </div>
@@ -666,55 +672,63 @@ body {
 /* Row layout */
 .game-row {
   display: flex; align-items: center;
-  padding: 6px 5px; gap: 3px;
+  padding: 5px 5px; gap: 4px;
 }
 .star-btn {
   background: none; border: none; cursor: pointer;
-  font-size: 13px; color: #444; padding: 0 3px 0 0; flex-shrink: 0;
+  font-size: 13px; color: #444; padding: 0 1px 0 0; flex-shrink: 0;
   line-height: 1;
 }
 .star-btn.on { color: #f8a019; }
 .star-btn:hover { color: #aaa; }
 
 /* Team sides */
-.team { display: flex; align-items: center; flex: 1; gap: 4px; min-width: 0; }
-.team.home { flex-direction: row-reverse; }
-.logo { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
-.abbr { font-size: 10px; font-weight: 700; color: #888; white-space: nowrap; }
-.big-score {
-  font-size: 18px; font-weight: 800; color: #ccc;
-  min-width: 26px; text-align: center; flex-shrink: 0;
-  font-variant-numeric: tabular-nums; letter-spacing: -1px;
+.team-side {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
 }
-.home-label-wrap {
+.home-side { flex-direction: row-reverse; margin-right: 8px; }
+.home-info {
   display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
 }
+.logo { width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
+.abbr { font-size: 9px; font-weight: 700; color: #777; white-space: nowrap; }
 .home-badge {
   font-size: 7px; background: #1e3a5f; color: #5b9bd5;
-  padding: 1px 3px; border-radius: 2px;
+  padding: 1px 3px; border-radius: 2px; white-space: nowrap;
 }
 
-/* Center panel */
-.center-panel {
-  display: flex; flex-direction: column; align-items: center;
-  min-width: 60px; max-width: 68px; flex-shrink: 0; gap: 1px;
+/* Center column: badge → scores → time → venue */
+.match-center {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  gap: 1px; min-width: 0;
 }
-.live-dot {
-  width: 5px; height: 5px; background: #f8a019;
-  border-radius: 50%; animation: pulse 1.2s ease-in-out infinite; margin-bottom: 1px;
+.period-badge {
+  font-size: 9px; font-weight: 700;
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap;
 }
-@keyframes pulse {
-  0%,100% { opacity:1; transform:scale(1); }
-  50%      { opacity:0.3; transform:scale(0.6); }
+.period-badge.live {
+  background: #f8a019; color: #1a1a1a;
+  animation: badgePulse 2s ease-in-out infinite;
 }
-.s1 { font-size: 10px; font-weight: 700; text-align: center; }
-.s1.live      { color: #f8a019; }
-.s1.final     { color: #666; }
-.s1.scheduled { color: #5b9bd5; }
-.s2 { font-size: 9px; color: #555; text-align: center; white-space: nowrap; }
-.venue {
-  font-size: 7px; color: #333; text-align: center;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 66px;
+.period-badge.final     { background: #2a2a2a; color: #555; }
+.period-badge.scheduled { background: #1e3a5f; color: #5b9bd5; }
+@keyframes badgePulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+.scores-row {
+  display: flex; align-items: center; gap: 5px;
+}
+.big-score {
+  font-size: 22px; font-weight: 800; color: #e0e0e0;
+  min-width: 26px; text-align: center;
+  font-variant-numeric: tabular-nums; letter-spacing: -1px;
+}
+.score-sep { font-size: 14px; color: #444; font-weight: 300; }
+.match-time  { font-size: 9px; color: #555; text-align: center; white-space: nowrap; }
+.match-venue {
+  font-size: 9px; color: #444; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;
 }
 
 /* Play feed */
