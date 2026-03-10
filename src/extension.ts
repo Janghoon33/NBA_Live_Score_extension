@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
+import { getPlayerNameKo } from './playerNames';
 
 function getTodayParam(): string {
   // ESPN API uses US Eastern Time (UTC-5). Convert UTC to ET before extracting date.
@@ -76,7 +77,13 @@ async function fetchPlays(eventId: string): Promise<EspnPlay[]> {
 }
 
 // ── Play display helpers ──────────────────────────────────────
-interface PlayDisplay { emoji: string; label: string; labelClass: string; }
+interface PlayDisplay {
+  emoji: string;
+  label: string;
+  labelKo: string;
+  labelClass: string;
+  descKo: string;
+}
 
 function classifyPlay(play: EspnPlay): PlayDisplay {
   const t = (play.text || '').toLowerCase();
@@ -84,40 +91,70 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
 
   // 3-pointers
   if (t.includes('three point') || t.includes('3-point') || t.includes('3 point')) {
-    if (t.includes('makes') || scoring) return { emoji: '🤟', label: 'THREE!', labelClass: 'three' };
-    return { emoji: '❌', label: '3PT MISS', labelClass: 'miss' };
+    if (t.includes('makes') || scoring) return { emoji: '🤟', label: 'THREE!',   labelKo: '3점슛!',    labelClass: 'three', descKo: '3점슛 성공' };
+    return                               { emoji: '❌', label: '3PT MISS', labelKo: '3점슛 실패',  labelClass: 'miss',  descKo: '3점슛 실패' };
   }
   // Free throws
   if (t.includes('free throw')) {
-    if (t.includes('makes') || scoring) return { emoji: '☝️', label: 'FT', labelClass: 'ft' };
-    return { emoji: '❌', label: 'FT MISS', labelClass: 'miss' };
+    if (t.includes('makes') || scoring) return { emoji: '☝️', label: 'FT',      labelKo: '자유투',    labelClass: 'ft',    descKo: '자유투 성공' };
+    return                               { emoji: '❌', label: 'FT MISS',  labelKo: 'FT 실패',   labelClass: 'miss',  descKo: '자유투 실패' };
   }
   // Dunks / Layups / Makes
-  if (t.includes('dunk'))                    return { emoji: '💥', label: 'DUNK', labelClass: 'score' };
+  if (t.includes('dunk'))
+    return { emoji: '💥', label: 'DUNK',      labelKo: '덩크',      labelClass: 'score', descKo: '덩크슛 성공' };
   if (t.includes('layup') && (t.includes('makes') || scoring))
-                                              return { emoji: '🏀', label: 'LAYUP', labelClass: 'score' };
-  if (t.includes('alley oop'))               return { emoji: '🤸', label: 'ALLEY-OOP', labelClass: 'score' };
-  if (scoring || t.includes('makes'))        return { emoji: '🏀', label: '2PT', labelClass: 'score' };
+    return { emoji: '🏀', label: 'LAYUP',     labelKo: '레이업',    labelClass: 'score', descKo: '레이업 성공' };
+  if (t.includes('alley oop'))
+    return { emoji: '🤸', label: 'ALLEY-OOP', labelKo: '앨리웁',    labelClass: 'score', descKo: '앨리웁 성공' };
+  if (scoring || t.includes('makes'))
+    return { emoji: '🏀', label: '2PT',       labelKo: '2점슛',     labelClass: 'score', descKo: '필드골 성공' };
   // Misses
-  if (t.includes('misses') || t.includes('miss')) return { emoji: '❌', label: 'MISS', labelClass: 'miss' };
+  if (t.includes('misses') || t.includes('miss'))
+    return { emoji: '❌', label: 'MISS',      labelKo: '실패',      labelClass: 'miss',  descKo: '슛 실패' };
   // Rebounds
-  if (t.includes('offensive rebound'))       return { emoji: '💪', label: 'OFF REB', labelClass: 'reb' };
-  if (t.includes('rebound'))                 return { emoji: '🫳', label: 'REB', labelClass: 'reb' };
+  if (t.includes('offensive rebound'))
+    return { emoji: '💪', label: 'OFF REB',   labelKo: '공격리바',  labelClass: 'reb',   descKo: '공격 리바운드' };
+  if (t.includes('rebound'))
+    return { emoji: '🫳', label: 'REB',       labelKo: '리바운드',  labelClass: 'reb',   descKo: '수비 리바운드' };
   // Defense
-  if (t.includes('steal'))                   return { emoji: '✊', label: 'STEAL', labelClass: 'def' };
-  if (t.includes('block'))                   return { emoji: '🚫', label: 'BLOCK', labelClass: 'def' };
-  // Turnovers
-  if (t.includes('bad pass') || t.includes('lost ball') || t.includes('turnover'))
-                                              return { emoji: '🔄', label: 'TURNOVER', labelClass: 'to' };
-  // Fouls
-  if (t.includes('foul'))                    return { emoji: '✋', label: 'FOUL', labelClass: 'foul' };
+  if (t.includes('steal'))
+    return { emoji: '✊', label: 'STEAL',     labelKo: '스틸',      labelClass: 'def',   descKo: '볼 스틸' };
+  if (t.includes('block'))
+    return { emoji: '🚫', label: 'BLOCK',     labelKo: '블록',      labelClass: 'def',   descKo: '블록슛' };
+  // Turnovers (split by subtype for better Korean)
+  if (t.includes('bad pass'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '패스 실수' };
+  if (t.includes('lost ball'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '볼 분실' };
+  if (t.includes('turnover'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '턴오버' };
+  // Fouls (split by subtype)
+  if (t.includes('technical'))
+    return { emoji: '✋', label: 'FOUL',      labelKo: '파울',      labelClass: 'foul',  descKo: '테크니컬 파울' };
+  if (t.includes('flagrant'))
+    return { emoji: '✋', label: 'FOUL',      labelKo: '파울',      labelClass: 'foul',  descKo: '플래그런트 파울' };
+  if (t.includes('foul'))
+    return { emoji: '✋', label: 'FOUL',      labelKo: '파울',      labelClass: 'foul',  descKo: '개인 파울' };
   // Game flow
-  if (t.includes('timeout'))                 return { emoji: '⏸️', label: 'TIMEOUT', labelClass: 'misc' };
-  if (t.includes('end of'))                  return { emoji: '🔔', label: '', labelClass: 'misc' };
-  if (t.includes('jump ball'))               return { emoji: '⚡', label: 'JUMP BALL', labelClass: 'misc' };
-  if (t.includes('violation'))               return { emoji: '🚷', label: 'VIOLATION', labelClass: 'misc' };
+  if (t.includes('timeout'))
+    return { emoji: '⏸️', label: 'TIMEOUT',  labelKo: '타임아웃',  labelClass: 'misc',  descKo: '팀 타임아웃' };
+  if (t.includes('end of')) {
+    let descKo = '쿼터 종료';
+    if      (t.includes('1st') || t.includes('first'))  descKo = '1쿼터 종료';
+    else if (t.includes('2nd') || t.includes('second')) descKo = '2쿼터 종료';
+    else if (t.includes('3rd') || t.includes('third'))  descKo = '3쿼터 종료';
+    else if (t.includes('4th') || t.includes('fourth')) descKo = '4쿼터 종료';
+    else if (t.includes('half'))                         descKo = '전반 종료';
+    else if (t.includes('game') || t.includes('regulation')) descKo = '경기 종료';
+    else if (t.includes('overtime') || t.includes(' ot')) descKo = '연장 종료';
+    return { emoji: '🔔', label: '', labelKo: '', labelClass: 'misc', descKo };
+  }
+  if (t.includes('jump ball'))
+    return { emoji: '⚡', label: 'JUMP BALL', labelKo: '점프볼',    labelClass: 'misc',  descKo: '점프볼' };
+  if (t.includes('violation'))
+    return { emoji: '🚷', label: 'VIOLATION', labelKo: '바이얼레이션', labelClass: 'misc', descKo: '룰 위반' };
 
-  return { emoji: '▸', label: '', labelClass: 'misc' };
+  return { emoji: '▸', label: '', labelKo: '', labelClass: 'misc', descKo: '' };
 }
 
 function getPlayPeriod(play: EspnPlay): string {
@@ -479,7 +516,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         const plays = this._playMap.get(event.id) ?? [];
         if (isLive && plays.length > 0) {
           const rows = plays.map((play, idx) => {
-            const { emoji, label, labelClass } = classifyPlay(play);
+            const { emoji, label, labelKo, labelClass, descKo } = classifyPlay(play);
             const player = getPlayerName(play);
             const period = getPlayPeriod(play);
             const clock = getPlayClock(play);
@@ -494,11 +531,19 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             // Slide-in animation on the newest row when a new play arrived
             const newClass = (idx === 0 && hasNewPlay) ? ' new-play' : '';
 
-            let desc = play.text || '';
-            if (player && desc.startsWith(player)) {
-              desc = desc.slice(player.length).replace(/^[\s·\-]+/, '');
+            // Display label & description by language
+            const displayLabel = isKo ? labelKo : label;
+            let desc: string;
+            if (isKo) {
+              desc = descKo;
+            } else {
+              desc = play.text || '';
+              if (player && desc.startsWith(player)) {
+                desc = desc.slice(player.length).replace(/^[\s·\-]+/, '');
+              }
+              if (desc.length > 45) { desc = desc.slice(0, 44) + '…'; }
             }
-            if (desc.length > 45) { desc = desc.slice(0, 44) + '…'; }
+            const displayPlayer = isKo ? getPlayerNameKo(player) : player;
 
             return `<div class="play-row ${teamSide}${newClass}">
               ${teamLogo
@@ -506,11 +551,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
                 : `<span class="p-logo-placeholder"></span>`}
               <span class="p-emoji">${emoji}</span>
               <div class="p-body">
-                ${player ? `<span class="p-player">${player}</span>` : ''}
-                <span class="p-desc">${desc}</span>
+                ${displayPlayer ? `<span class="p-player">${displayPlayer}</span>` : ''}
+                ${desc ? `<span class="p-desc">${desc}</span>` : ''}
               </div>
               <div class="p-meta">
-                ${label ? `<span class="p-label ${labelClass}">${label}</span>` : ''}
+                ${displayLabel ? `<span class="p-label ${labelClass}">${displayLabel}</span>` : ''}
                 ${period || clock ? `<span class="p-clock">${period}${clock ? ' ' + clock : ''}</span>` : ''}
               </div>
             </div>`;
