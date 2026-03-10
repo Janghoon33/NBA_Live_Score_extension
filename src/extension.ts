@@ -265,11 +265,15 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   // ── Toggle ────────────────────────────────────────────────────
   private async _toggleGame(eventId: string) {
     if (this._selectedGames.has(eventId)) {
+      // Remove: update state and render immediately — no async before render
       this._selectedGames.delete(eventId);
       this._playMap.delete(eventId);
       this._lastPlayText.delete(eventId);
+      this._render();
     } else {
+      // Add: show star on instantly, then load plays
       this._selectedGames.add(eventId);
+      this._render();
       const ev = this._events.find((e) => e.id === eventId);
       if (ev?.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS') {
         const plays = await fetchPlays(eventId);
@@ -277,11 +281,12 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         this._lastPlayText.set(eventId, plays[0]?.text ?? '');
         // Start play timer if not already running
         if (!this._playTimer) { this._schedulePlaysNext(true); }
+        this._render();
       }
     }
-    await this._context.globalState.update('nba.selectedGames', [...this._selectedGames]);
-    await this._context.globalState.update('nba.selectedDate', getTodayParam());
-    this._render();
+    // Persist asynchronously after UI has already updated
+    this._context.globalState.update('nba.selectedGames', [...this._selectedGames]);
+    this._context.globalState.update('nba.selectedDate', getTodayParam());
   }
 
   // ── Full refresh (initial + manual) ──────────────────────────
