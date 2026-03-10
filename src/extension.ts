@@ -64,6 +64,88 @@ function fetchData<T>(url: string): Promise<T> {
   });
 }
 
+// ── Player Stats ──────────────────────────────────────────────
+interface PlayerStats { name: string; starter: boolean; stats: Record<string, string>; }
+interface TeamStats   { abbr: string; players: PlayerStats[]; }
+interface GameStats   { away: TeamStats; home: TeamStats; }
+
+// Columns to display (ESPN label → Korean header / English header)
+const STAT_COLS: { key: string; ko: string; en: string }[] = [
+  { key: 'MIN',  ko: '출전', en: 'MIN' },
+  { key: 'PTS',  ko: '득점', en: 'PTS' },
+  { key: 'REB',  ko: '리바', en: 'REB' },
+  { key: 'AST',  ko: '어시', en: 'AST' },
+  { key: 'STL',  ko: '스틸', en: 'STL' },
+  { key: 'BLK',  ko: '블록', en: 'BLK' },
+  { key: 'FG',   ko: '야투', en: 'FG'  },
+  { key: 'FG%',  ko: '야투%',en: 'FG%' },
+  { key: '3PT',  ko: '3점',  en: '3PT' },
+  { key: 'FT',   ko: '자투', en: 'FT'  },
+  { key: 'FT%',  ko: '자투%',en: 'FT%' },
+  { key: 'OREB', ko: '공리', en: 'OREB'},
+  { key: 'DREB', ko: '수리', en: 'DREB'},
+  { key: 'TO',   ko: '턴오', en: 'TO'  },
+  { key: 'PF',   ko: '파울', en: 'PF'  },
+  { key: '+/-',  ko: '+/-',  en: '+/-' },
+];
+
+function parseMakeAtt(s: string): [number, number] {
+  const parts = (s ?? '').split('-').map(Number);
+  return [isFinite(parts[0]) ? parts[0] : 0, isFinite(parts[1]) ? parts[1] : 0];
+}
+function fmtPct(made: number, att: number): string {
+  if (att === 0) return '-';
+  return (Math.round(made / att * 1000) / 10).toFixed(1) + '%';
+}
+
+async function fetchStats(eventId: string): Promise<GameStats | null> {
+  try {
+    const json: any = await fetchData(ESPN_SUMMARY_BASE + eventId);
+    const teamStats: any[] = json.boxscore?.players ?? [];
+    if (teamStats.length === 0) return null;
+
+    const extractTeam = (teamData: any): TeamStats => {
+      const abbr: string = teamData.team?.abbreviation ?? '';
+      const stats: any = teamData.statistics?.[0] ?? {};
+      const labels: string[] = stats.labels ?? stats.names ?? [];
+      const athletes: any[] = stats.athletes ?? [];
+
+      const players: PlayerStats[] = athletes.map((a: any) => {
+        const rawStats: string[] = a.stats ?? [];
+        const statMap: Record<string, string> = {};
+        labels.forEach((lbl: string, i: number) => { statMap[lbl] = rawStats[i] ?? '-'; });
+        // Compute FG% and FT% from made-attempted strings
+        const [fgm, fga] = parseMakeAtt(statMap['FG'] ?? '');
+        const [ftm, fta] = parseMakeAtt(statMap['FT'] ?? '');
+        statMap['FG%'] = fmtPct(fgm, fga);
+        statMap['FT%'] = fmtPct(ftm, fta);
+        // Normalize FG / 3PT / FT display to "m/a"
+        if (statMap['FG'])  statMap['FG']  = statMap['FG'].replace('-', '/');
+        if (statMap['3PT']) statMap['3PT'] = statMap['3PT'].replace('-', '/');
+        if (statMap['FT'])  statMap['FT']  = statMap['FT'].replace('-', '/');
+        return {
+          name:    a.athlete?.displayName ?? '?',
+          starter: a.starter === true,
+          stats:   statMap,
+        };
+      });
+
+      // Sort: starters first, then bench; sort by PTS desc within each group
+      const starters = players.filter(p => p.starter);
+      const bench    = players.filter(p => !p.starter);
+      const byPts    = (a: PlayerStats, b: PlayerStats) =>
+        (parseInt(b.stats['PTS'] ?? '0') || 0) - (parseInt(a.stats['PTS'] ?? '0') || 0);
+      return { abbr, players: [...starters.sort(byPts), ...bench.sort(byPts)] };
+    };
+
+    const awayData = teamStats.find((t: any) => t.homeAway === 'away') ?? teamStats[0];
+    const homeData = teamStats.find((t: any) => t.homeAway === 'home') ?? teamStats[1];
+    if (!awayData) return null;
+
+    return { away: extractTeam(awayData), home: extractTeam(homeData ?? awayData) };
+  } catch { return null; }
+}
+
 async function fetchPlays(eventId: string): Promise<EspnPlay[]> {
   try {
     const json: any = await fetchData(ESPN_SUMMARY_BASE + eventId);
@@ -197,6 +279,11 @@ const T = {
     gameStart:      (t: string) => `경기 시작: ${t}`,
     autoFeed:       '시작 후 자동으로 중계가 표시됩니다',
     gameOver:       '경기 종료',
+    stats:          '기록',
+    statsLoading:   '기록 불러오는 중...',
+    statsNone:      '기록 정보 없음',
+    starterLabel:   '선발',
+    benchLabel:     '벤치',
   },
   en: {
     loading:        'Loading...',
@@ -216,6 +303,11 @@ const T = {
     gameStart:      (t: string) => `Tip-off: ${t}`,
     autoFeed:       'Live feed will appear after tip-off',
     gameOver:       'Game over',
+    stats:          'Stats',
+    statsLoading:   'Loading stats...',
+    statsNone:      'Stats not available',
+    starterLabel:   'Starters',
+    benchLabel:     'Bench',
   },
 } as const;
 
@@ -230,6 +322,9 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   private _playMap = new Map<string, EspnPlay[]>();
   private _lastPlayText = new Map<string, string>(); // eventId -> most recent play text
   private _newPlayEventIds = new Set<string>();       // games with a freshly arrived play
+  private _statsMap = new Map<string, GameStats | null>();  // eventId -> stats (null = no data)
+  private _statsLoading = new Set<string>();                // eventId -> currently fetching
+  private _expandedStats = new Set<string>();              // eventId -> stats panel open
   private _lang: Lang;
 
   constructor(
@@ -266,6 +361,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       if (msg.command === 'refresh') { this._refresh(); }
       if (msg.command === 'toggleGame') { await this._toggleGame(msg.eventId); }
+      if (msg.command === 'toggleStats') { await this._toggleStats(msg.eventId); }
       if (msg.command === 'setLang') {
         this._lang = msg.lang as Lang;
         await this._context.globalState.update('nba.lang', this._lang);
@@ -324,6 +420,24 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     // Persist asynchronously after UI has already updated
     this._context.globalState.update('nba.selectedGames', [...this._selectedGames]);
     this._context.globalState.update('nba.selectedDate', getTodayParam());
+  }
+
+  // ── Stats toggle ──────────────────────────────────────────────
+  private async _toggleStats(eventId: string) {
+    if (this._expandedStats.has(eventId)) {
+      this._expandedStats.delete(eventId);
+      this._render();
+      return;
+    }
+    this._expandedStats.add(eventId);
+    if (!this._statsMap.has(eventId)) {
+      this._statsLoading.add(eventId);
+      this._render();
+      const stats = await fetchStats(eventId);
+      this._statsMap.set(eventId, stats);
+      this._statsLoading.delete(eventId);
+    }
+    this._render();
   }
 
   // ── Full refresh (initial + manual) ──────────────────────────
@@ -456,6 +570,12 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   private _getWebviewContent(): string {
     const t = T[this._lang];
     const isKo = this._lang === 'ko';
+    const threeUri = this._view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'three.png')
+    ).toString();
+    const dunkUri = this._view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'dunk.png')
+    ).toString();
     const now = new Date();
     const dateLabel = isKo
       ? now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })
@@ -553,7 +673,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
               ${teamLogo
                 ? `<img class="p-logo" src="${teamLogo}" title="${teamAbbr}" onerror="this.style.display='none'">`
                 : `<span class="p-logo-placeholder"></span>`}
-              <span class="p-emoji">${emoji}</span>
+              ${emoji === '🤟'
+                ? `<img class="p-emoji-img" src="${threeUri}" alt="3PT">`
+                : emoji === '💥'
+                  ? `<img class="p-emoji-img" src="${dunkUri}" alt="DUNK">`
+                  : `<span class="p-emoji">${emoji}</span>`}
               <div class="p-body">
                 ${displayPlayer ? `<span class="p-player">${displayPlayer}</span>` : ''}
                 ${desc ? `<span class="p-desc">${desc}</span>` : ''}
@@ -611,6 +735,57 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             </div>
           </div>
           ${playFeedHtml}
+          ${(() => {
+            const isStatsExpanded = this._expandedStats.has(event.id);
+            const isStatsLoading  = this._statsLoading.has(event.id);
+            const gameStats = this._statsMap.get(event.id);
+            const btnLabel = isStatsExpanded ? `▲ ${t.stats}` : `▼ ${t.stats}`;
+            let statsPanel = '';
+            if (isStatsExpanded) {
+              if (isStatsLoading) {
+                statsPanel = `<div class="stats-panel"><span class="stats-msg">${t.statsLoading}</span></div>`;
+              } else if (!gameStats) {
+                statsPanel = `<div class="stats-panel"><span class="stats-msg">${t.statsNone}</span></div>`;
+              } else {
+                const colHeaders = STAT_COLS.map(c =>
+                  `<th class="stat-th">${isKo ? c.ko : c.en}</th>`).join('');
+                const renderTeam = (team: TeamStats) => {
+                  let lastWasStarter: boolean | null = null;
+                  return team.players.map(p => {
+                    let divider = '';
+                    if (lastWasStarter === true && !p.starter) {
+                      divider = `<tr class="stats-divider"><td colspan="${STAT_COLS.length + 1}"></td></tr>`;
+                    }
+                    lastWasStarter = p.starter;
+                    const cells = STAT_COLS.map(c =>
+                      `<td class="stat-td">${p.stats[c.key] ?? '-'}</td>`).join('');
+                    const displayName = isKo ? getPlayerNameKo(p.name) : p.name;
+                    const shortName = displayName.length > 14 ? displayName.slice(0, 13) + '…' : displayName;
+                    return divider + `<tr class="stat-row${p.starter ? ' starter' : ''}">
+                      <td class="stat-name">${shortName}</td>${cells}</tr>`;
+                  }).join('');
+                };
+                const renderSection = (team: TeamStats) =>
+                  `<tr class="stats-team-header">
+                    <th class="stat-team-th" colspan="${STAT_COLS.length + 1}">${team.abbr}</th>
+                  </tr>
+                  <tr class="stats-header-row">
+                    <th class="stat-name-th">${isKo ? '선수' : 'Player'}</th>${colHeaders}
+                  </tr>
+                  ${renderTeam(team)}`;
+                statsPanel = `<div class="stats-panel">
+                  <div class="stats-scroll">
+                    <table class="stats-table">
+                      ${renderSection(gameStats.away)}
+                      <tr class="stats-spacer"><td colspan="${STAT_COLS.length + 1}"></td></tr>
+                      ${renderSection(gameStats.home)}
+                    </table>
+                  </div>
+                </div>`;
+              }
+            }
+            return `<button class="stats-btn" onclick="toggleStats('${event.id}')">${btnLabel}</button>${statsPanel}`;
+          })()}
         </div>`;
     }).join('');
 
@@ -628,7 +803,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: #1a1a1a;
-  color: #ccc;
+  color: #ddd;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 11px;
   padding: 4px 5px;
@@ -639,14 +814,14 @@ body {
   display: flex; justify-content: space-between; align-items: center;
   padding: 3px 1px 5px; border-bottom: 1px solid #252525; margin-bottom: 5px;
 }
-.header-left { font-size: 9px; color: #555; }
+.header-left { font-size: 9px; color: #777; }
 .refresh-btn {
-  background: none; border: none; color: #555;
+  background: none; border: none; color: #777;
   cursor: pointer; font-size: 13px; padding: 0; line-height: 1;
 }
-.refresh-btn:hover { color: #aaa; }
+.refresh-btn:hover { color: #ccc; }
 .lang-btn {
-  background: none; border: 1px solid #2d2d2d; color: #444;
+  background: none; border: 1px solid #2d2d2d; color: #666;
   cursor: pointer; font-size: 8px; font-weight: 700;
   padding: 1px 4px; border-radius: 3px; line-height: 1.4;
 }
@@ -656,8 +831,8 @@ body {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 5px;
 }
-.game-count { font-size: 9px; color: #444; }
-.watching-hint { font-size: 9px; color: #3a6ea5; }
+.game-count { font-size: 9px; color: #777; }
+.watching-hint { font-size: 9px; color: #5b9bd5; }
 
 /* Game card */
 .game-card {
@@ -676,7 +851,7 @@ body {
 }
 .star-btn {
   background: none; border: none; cursor: pointer;
-  font-size: 13px; color: #444; padding: 0 1px 0 0; flex-shrink: 0;
+  font-size: 13px; color: #666; padding: 0 1px 0 0; flex-shrink: 0;
   line-height: 1;
 }
 .star-btn.on { color: #f8a019; }
@@ -691,7 +866,7 @@ body {
   display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
 }
 .logo { width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
-.abbr { font-size: 9px; font-weight: 700; color: #777; white-space: nowrap; }
+.abbr { font-size: 9px; font-weight: 700; color: #aaa; white-space: nowrap; }
 .home-badge {
   font-size: 7px; background: #1e3a5f; color: #5b9bd5;
   padding: 1px 3px; border-radius: 2px; white-space: nowrap;
@@ -724,10 +899,10 @@ body {
   min-width: 26px; text-align: center;
   font-variant-numeric: tabular-nums; letter-spacing: -1px;
 }
-.score-sep { font-size: 14px; color: #444; font-weight: 300; }
-.match-time  { font-size: 9px; color: #555; text-align: center; white-space: nowrap; }
+.score-sep { font-size: 14px; color: #666; font-weight: 300; }
+.match-time  { font-size: 9px; color: #999; text-align: center; white-space: nowrap; }
 .match-venue {
-  font-size: 9px; color: #444; text-align: center;
+  font-size: 9px; color: #777; text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;
 }
 
@@ -738,12 +913,14 @@ body {
   padding: 3px 0;
   max-height: 260px;
   overflow-y: auto;
+  overflow-x: auto;
 }
 .play-row {
   display: flex; align-items: center; gap: 4px;
-  padding: 3px 6px 3px 0;
+  padding: 3px 8px 3px 0;
   border-bottom: 1px solid #1e1e1e;
   border-left: 2px solid transparent;
+  min-width: max-content;
 }
 .play-row:last-child { border-bottom: none; }
 .play-row:hover { background: #1f1f1f; }
@@ -766,16 +943,17 @@ body {
 }
 .p-logo-placeholder { width: 16px; flex-shrink: 0; margin-left: 4px; }
 .p-emoji { font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; }
+.p-emoji-img { width: 16px; height: 16px; flex-shrink: 0; object-fit: contain; filter: invert(1); }
 .p-body {
   display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0;
 }
 .p-player {
-  font-size: 10px; font-weight: 700; color: #bbb;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 10px; font-weight: 700; color: #ddd;
+  white-space: nowrap;
 }
 .p-desc {
-  font-size: 9px; color: #666;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 9px; color: #999;
+  white-space: nowrap;
 }
 .p-meta {
   display: flex; flex-direction: column; align-items: flex-end;
@@ -793,13 +971,54 @@ body {
 .p-label.def     { background: rgba(80,160,200,0.1); color: #60a8c8; }
 .p-label.to      { background: rgba(200,150,50,0.1); color: #c8a050; }
 .p-label.foul    { background: rgba(180,100,180,0.1); color: #c08bc0; }
-.p-label.misc    { background: transparent; color: #444; }
-.p-clock { font-size: 8px; color: #333; white-space: nowrap; }
+.p-label.misc    { background: transparent; color: #666; }
+.p-clock { font-size: 8px; color: #777; white-space: nowrap; }
 .play-empty {
-  padding: 8px 10px; color: #444; font-size: 10px; text-align: center; line-height: 1.7;
+  padding: 8px 10px; color: #666; font-size: 10px; text-align: center; line-height: 1.7;
 }
 
-.no-games { text-align: center; padding: 30px 10px; color: #444; line-height: 2.2; font-size: 11px; }
+.no-games { text-align: center; padding: 30px 10px; color: #666; line-height: 2.2; font-size: 11px; }
+
+/* Stats */
+.stats-btn {
+  display: block; width: 100%; background: none; border: none;
+  border-top: 1px solid #252525; color: #777; font-size: 9px;
+  cursor: pointer; padding: 4px 8px; text-align: left;
+}
+.stats-btn:hover { color: #ccc; background: #1f1f1f; }
+.stats-panel { border-top: 1px solid #252525; background: #0f0f0f; }
+.stats-msg { display: block; padding: 8px; font-size: 9px; color: #444; }
+.stats-scroll { overflow-x: auto; overflow-y: auto; max-height: 320px; }
+.stats-table {
+  border-collapse: collapse; min-width: max-content; width: 100%; font-size: 9px;
+}
+.stats-team-header th {
+  background: #1a1a2e; color: #5b9bd5; font-size: 9px; font-weight: 700;
+  padding: 4px 6px; text-align: left; position: sticky; top: 0; z-index: 2;
+}
+.stats-header-row th {
+  background: #141414; color: #666; font-size: 8px; font-weight: 600;
+  padding: 3px 5px; white-space: nowrap; position: sticky; top: 17px; z-index: 1;
+  border-bottom: 1px solid #252525;
+}
+.stat-name-th {
+  position: sticky !important; left: 0; z-index: 3 !important;
+  background: #141414 !important; min-width: 100px;
+}
+.stat-row td { padding: 3px 5px; border-bottom: 1px solid #1a1a1a; white-space: nowrap; }
+.stat-row.starter .stat-name { color: #ddd; }
+.stat-row:not(.starter) .stat-name { color: #888; }
+.stat-name {
+  position: sticky; left: 0; background: #0f0f0f;
+  min-width: 100px; max-width: 120px; z-index: 1;
+  border-right: 1px solid #252525;
+}
+.stat-row.starter .stat-name { background: #111; }
+.stat-td { color: #aaa; text-align: right; min-width: 32px; }
+.stat-row:hover td { background: #1a1a1a; }
+.stat-row:hover .stat-name { background: #1a1a1a; }
+.stats-divider td { padding: 0; border-top: 1px dashed #252525; }
+.stats-spacer td { height: 6px; background: #0a0a0a; }
 </style>
 </head>
 <body>
@@ -809,7 +1028,6 @@ body {
       <button class="lang-btn ${isKo ? 'active' : ''}" onclick="setLang('ko')">KO</button>
       <span style="color:#333;font-size:9px;">|</span>
       <button class="lang-btn ${!isKo ? 'active' : ''}" onclick="setLang('en')">EN</button>
-      <button class="refresh-btn" onclick="vscode.postMessage({command:'refresh'})" title="${t.refresh}">↻</button>
     </div>
   </div>
   ${events.length > 0 ? `
@@ -823,6 +1041,7 @@ body {
     const vscode = acquireVsCodeApi();
     function toggle(id) { vscode.postMessage({ command: 'toggleGame', eventId: id }); }
     function setLang(lang) { vscode.postMessage({ command: 'setLang', lang }); }
+    function toggleStats(id) { vscode.postMessage({ command: 'toggleStats', eventId: id }); }
   </script>
 </body>
 </html>`;
