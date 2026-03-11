@@ -396,6 +396,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   private _statsMap = new Map<string, GameStats | null>();  // eventId -> stats (null = no data)
   private _statsLoading = new Set<string>();                // eventId -> currently fetching
   private _expandedStats = new Set<string>();              // eventId -> stats panel open
+  private _finalStatsUpdated = new Set<string>();          // eventId -> final stats fetched once
   private _lang: Lang;
 
   constructor(
@@ -466,6 +467,22 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  private _getEventStatus(eventId: string): string {
+    return this._events.find((e) => e.id === eventId)?.competitions[0]?.status?.type?.name ?? '';
+  }
+
+  // Fetch and store stats for given ids; mark FINAL ones in _finalStatsUpdated
+  private async _updateStatsFor(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const results = await Promise.all(ids.map((id) => fetchStats(id)));
+    ids.forEach((id, i) => {
+      this._statsMap.set(id, results[i]);
+      if (this._getEventStatus(id) === 'STATUS_FINAL') {
+        this._finalStatsUpdated.add(id);
+      }
+    });
+  }
+
   // ── Toggle ────────────────────────────────────────────────────
   private async _toggleGame(eventId: string) {
     if (this._selectedGames.has(eventId)) {
@@ -501,13 +518,12 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     this._expandedStats.add(eventId);
-    if (!this._statsMap.has(eventId)) {
-      this._statsLoading.add(eventId);
-      this._render();
-      const stats = await fetchStats(eventId);
-      this._statsMap.set(eventId, stats);
-      this._statsLoading.delete(eventId);
-    }
+    // Always fetch fresh stats when opening the panel
+    this._statsLoading.add(eventId);
+    this._render();
+    const stats = await fetchStats(eventId);
+    this._statsMap.set(eventId, stats);
+    this._statsLoading.delete(eventId);
     this._render();
   }
 
@@ -535,6 +551,14 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         });
       }
 
+      // Update stats for all expanded panels on full refresh
+      const expandedToUpdate = [...this._expandedStats].filter((id) => {
+        const status = this._getEventStatus(id);
+        if (status === 'STATUS_FINAL') return !this._finalStatsUpdated.has(id);
+        return status === 'STATUS_IN_PROGRESS';
+      });
+      await this._updateStatsFor(expandedToUpdate);
+
       this._render();
 
       const hasActive = this._events.some(
@@ -561,6 +585,14 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       for (const id of this._selectedGames) {
         if (!validIds.has(id)) { this._selectedGames.delete(id); }
       }
+
+      // Update stats for all expanded panels every 20s (fav + non-fav), final games get one last update
+      const expandedToUpdate = [...this._expandedStats].filter((id) => {
+        const status = this._getEventStatus(id);
+        if (status === 'STATUS_FINAL') return !this._finalStatsUpdated.has(id);
+        return status === 'STATUS_IN_PROGRESS';
+      });
+      await this._updateStatsFor(expandedToUpdate);
 
       this._render();
 
@@ -605,7 +637,13 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         }
       });
 
-      if (changed) { this._render(); }
+      // Update stats every 6s for favorited live games with expanded stats panel
+      const favExpandedLiveIds = liveSelected
+        .map((e) => e.id)
+        .filter((id) => this._expandedStats.has(id));
+      await this._updateStatsFor(favExpandedLiveIds);
+
+      if (changed || favExpandedLiveIds.length > 0) { this._render(); }
       this._schedulePlaysNext(true);
     } catch {
       this._schedulePlaysNext(true);
