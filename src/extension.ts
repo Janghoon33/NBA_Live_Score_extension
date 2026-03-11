@@ -235,6 +235,9 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
     return { emoji: '⚡', label: 'JUMP BALL', labelKo: '점프볼',    labelClass: 'misc',  descKo: '점프볼' };
   if (t.includes('violation'))
     return { emoji: '🚷', label: 'VIOLATION', labelKo: '바이얼레이션', labelClass: 'misc', descKo: '룰 위반' };
+  // Substitution
+  if (t.includes('enters the game') || t.includes('enters game'))
+    return { emoji: '🔁', label: 'IN',        labelKo: '투입',      labelClass: 'sub',  descKo: '선수 투입' };
 
   return { emoji: '▸', label: '', labelKo: '', labelClass: 'misc', descKo: '' };
 }
@@ -867,7 +870,8 @@ body {
   background: #212121; border-radius: 5px; margin-bottom: 4px;
   border-left: 2px solid #2a2a2a; overflow: hidden;
 }
-.game-card.live    { border-left-color: #f8a019; }
+.game-card.live    { border-left-color: #555; }
+.game-card.live.selected { border-left-color: #f8a019; }
 .game-card.final   { border-left-color: #2a2a2a; }
 .game-card.scheduled { border-left-color: #1e3a5f; }
 .game-card.selected { background: #1d2433; }
@@ -971,7 +975,7 @@ body {
 }
 .p-logo-placeholder { width: 16px; flex-shrink: 0; margin-left: 4px; }
 .p-emoji { font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; }
-.p-emoji-img { width: 16px; height: 16px; flex-shrink: 0; object-fit: contain; filter: invert(1); }
+.p-emoji-img { width: 16px; height: 16px; flex-shrink: 0; object-fit: contain; }
 .p-body {
   display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0;
 }
@@ -1000,6 +1004,7 @@ body {
 .p-label.to      { background: rgba(200,150,50,0.1); color: #c8a050; }
 .p-label.foul    { background: rgba(180,100,180,0.1); color: #c08bc0; }
 .p-label.misc    { background: transparent; color: #666; }
+.p-label.sub     { background: rgba(80,200,120,0.12); color: #5abf80; }
 .p-clock { font-size: 8px; color: #777; white-space: nowrap; }
 .play-empty {
   padding: 8px 10px; color: #666; font-size: 10px; text-align: center; line-height: 1.7;
