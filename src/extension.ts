@@ -191,25 +191,40 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
   if (scoring || t.includes('makes'))
     return { emoji: '🏀', label: '2PT',       labelKo: '2점슛',     labelClass: 'score', descKo: '필드골 성공' };
   // Misses
-  if (t.includes('misses') || t.includes('miss'))
-    return { emoji: '❌', label: 'MISS',      labelKo: '실패',      labelClass: 'miss',  descKo: '슛 실패' };
+  if (t.includes('misses') || t.includes('miss')) {
+    if (t.includes('jump shot') || t.includes('jumper')) {
+      const is3 = t.includes('three') || t.includes('3-point') || t.includes('3 point');
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: is3 ? '3pt 점프슛 실패' : '2pt 점프슛 실패' };
+    }
+    if (t.includes('layup'))
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '레이업 실패' };
+    if (t.includes('hook'))
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '훅슛 실패' };
+    if (t.includes('pullup') || t.includes('pull-up') || t.includes('pull up'))
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '풀업 실패' };
+    if (t.includes('fadeaway') || t.includes('fade away'))
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '페이드어웨이 실패' };
+    if (t.includes('step back') || t.includes('stepback'))
+      return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '스텝백 실패' };
+    return { emoji: '❌', label: 'MISS', labelKo: '실패', labelClass: 'miss', descKo: '슛 실패' };
+  }
   // Rebounds
   if (t.includes('offensive rebound'))
     return { emoji: '💪', label: 'OFF REB',   labelKo: '공격리바',  labelClass: 'reb',   descKo: '공격 리바운드' };
   if (t.includes('rebound'))
     return { emoji: '🫳', label: 'REB',       labelKo: '리바운드',  labelClass: 'reb',   descKo: '수비 리바운드' };
-  // Defense
-  if (t.includes('steal'))
-    return { emoji: '✊', label: 'STEAL',     labelKo: '스틸',      labelClass: 'def',   descKo: '볼 스틸' };
-  if (t.includes('block'))
-    return { emoji: '🚫', label: 'BLOCK',     labelKo: '블록',      labelClass: 'def',   descKo: '블록슛' };
-  // Turnovers (split by subtype for better Korean)
+  // Turnovers (split by subtype for better Korean) — must check before 'steal' since bad pass text contains "(X steals)"
   if (t.includes('bad pass'))
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '패스 실수' };
   if (t.includes('lost ball'))
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '볼 분실' };
   if (t.includes('turnover'))
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '턴오버' };
+  // Defense
+  if (t.includes('steal'))
+    return { emoji: '✊', label: 'STEAL',     labelKo: '스틸',      labelClass: 'def',   descKo: '볼 스틸' };
+  if (t.includes('block'))
+    return { emoji: '🚫', label: 'BLOCK',     labelKo: '블록',      labelClass: 'def',   descKo: '블록슛' };
   // Fouls (split by subtype)
   if (t.includes('technical'))
     return { emoji: '✋', label: 'FOUL',      labelKo: '파울',      labelClass: 'foul',  descKo: '테크니컬 파울' };
@@ -235,11 +250,15 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
     return { emoji: '⚡', label: 'JUMP BALL', labelKo: '점프볼',    labelClass: 'misc',  descKo: '점프볼' };
   if (t.includes('violation'))
     return { emoji: '🚷', label: 'VIOLATION', labelKo: '바이얼레이션', labelClass: 'misc', descKo: '룰 위반' };
+  if (t.includes("coach's challenge") || t.includes('challenge'))
+    return { emoji: '📋', label: 'CHALLENGE', labelKo: '챌린지',    labelClass: 'misc', descKo: '코치 챌린지' };
+  if (t.includes('replay') || t.includes('official'))
+    return { emoji: '📺', label: 'REVIEW',    labelKo: '비디오 판독', labelClass: 'misc', descKo: '비디오 판독' };
   // Substitution
   if (t.includes('enters the game') || t.includes('enters game'))
     return { emoji: '🔁', label: 'IN',        labelKo: '투입',      labelClass: 'sub',  descKo: '선수 투입' };
 
-  return { emoji: '▸', label: '', labelKo: '', labelClass: 'misc', descKo: '' };
+  return { emoji: '▸', label: '', labelKo: '', labelClass: 'misc', descKo: play.text?.slice(0, 30) || '' };
 }
 
 function getPlayPeriod(play: EspnPlay): string {
@@ -255,7 +274,9 @@ function getPlayClock(play: EspnPlay): string {
 function extractPlayerFromText(text: string): string {
   if (!text) { return ''; }
   // Team/game actions with no specific player
-  if (/^(team|jump ball|end of|start of|timeout|period|quarter|halftime)/i.test(text)) { return ''; }
+  if (/^(team|jump ball|end of|start of|timeout|period|quarter|halftime|replay|official)/i.test(text)) { return ''; }
+  // Team-name prefixed events (e.g. "Spurs Coach's Challenge")
+  if (/coach'?s/i.test(text)) { return ''; }
 
   const words = text.split(' ');
   if (words.length < 2) { return ''; }
@@ -287,6 +308,25 @@ function getPlayerName(play: EspnPlay): string {
     play.athletesInvolved?.[0]?.displayName ||
     extractPlayerFromText(play.text || '')
   );
+}
+
+function extractSubPlayers(play: EspnPlay): { inPlayer: string; outPlayer: string } {
+  const inPlayer =
+    (play as any).participants?.[0]?.athlete?.displayName ||
+    (play as any).athletes?.[0]?.displayName ||
+    play.athletesInvolved?.[0]?.displayName || '';
+  const outPlayer =
+    (play as any).participants?.[1]?.athlete?.displayName ||
+    (play as any).athletes?.[1]?.displayName ||
+    play.athletesInvolved?.[1]?.displayName || '';
+
+  if (!outPlayer && play.text) {
+    const m = play.text.match(/enters (?:the )?game for (.+)/i);
+    if (m) {
+      return { inPlayer: inPlayer || extractPlayerFromText(play.text), outPlayer: m[1].trim() };
+    }
+  }
+  return { inPlayer: inPlayer || extractPlayerFromText(play.text || ''), outPlayer };
 }
 
 // ── i18n ─────────────────────────────────────────────────────
@@ -700,6 +740,21 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             }
             const displayPlayer = isKo ? getPlayerNameKo(player) : player;
 
+            // Substitution: show IN/OUT rows
+            let pBody: string;
+            if (labelClass === 'sub') {
+              const { inPlayer, outPlayer } = extractSubPlayers(play);
+              const inName  = isKo ? getPlayerNameKo(inPlayer)  : inPlayer;
+              const outName = isKo ? getPlayerNameKo(outPlayer) : outPlayer;
+              pBody = `
+                ${inName  ? `<span class="p-player sub-in">↑ ${inName} IN</span>`  : ''}
+                ${outName ? `<span class="p-player sub-out">↓ ${outName} OUT</span>` : ''}`;
+            } else {
+              pBody = `
+                ${displayPlayer ? `<span class="p-player">${displayPlayer}</span>` : ''}
+                ${desc ? `<span class="p-desc">${desc}</span>` : ''}`;
+            }
+
             return `<div class="play-row ${teamSide}${newClass}">
               ${teamLogo
                 ? `<img class="p-logo" src="${teamLogo}" title="${teamAbbr}" onerror="this.style.display='none'">`
@@ -710,8 +765,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
                   ? `<img class="p-emoji-img" src="${dunkUri}" alt="DUNK">`
                   : `<span class="p-emoji">${emoji}</span>`}
               <div class="p-body">
-                ${displayPlayer ? `<span class="p-player">${displayPlayer}</span>` : ''}
-                ${desc ? `<span class="p-desc">${desc}</span>` : ''}
+                ${pBody}
               </div>
               <div class="p-meta">
                 ${displayLabel ? `<span class="p-label ${labelClass}">${displayLabel}</span>` : ''}
@@ -1005,6 +1059,8 @@ body {
 .p-label.foul    { background: rgba(180,100,180,0.1); color: #c08bc0; }
 .p-label.misc    { background: transparent; color: #666; }
 .p-label.sub     { background: rgba(80,200,120,0.12); color: #5abf80; }
+.sub-in  { color: #5abf80; }
+.sub-out { color: #c07070; }
 .p-clock { font-size: 8px; color: #777; white-space: nowrap; }
 .play-empty {
   padding: 8px 10px; color: #666; font-size: 10px; text-align: center; line-height: 1.7;
@@ -1075,6 +1131,32 @@ body {
     function toggle(id) { vscode.postMessage({ command: 'toggleGame', eventId: id }); }
     function setLang(lang) { vscode.postMessage({ command: 'setLang', lang }); }
     function toggleStats(id) { vscode.postMessage({ command: 'toggleStats', eventId: id }); }
+
+    // Drag-to-scroll for stats tables
+    document.addEventListener('mousedown', (e) => {
+      const el = e.target.closest('.stats-scroll');
+      if (!el) { return; }
+      let startX = e.pageX, scrollLeft = el.scrollLeft, dragging = false;
+      const onMove = (e) => {
+        const dx = e.pageX - startX;
+        if (!dragging && Math.abs(dx) < 4) { return; }
+        dragging = true;
+        el.scrollLeft = scrollLeft - dx;
+        e.preventDefault();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (dragging) { el.style.cursor = 'grab'; }
+      };
+      el.style.cursor = 'grabbing';
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('.stats-scroll');
+      if (el) { el.style.cursor = 'grab'; }
+    });
   </script>
 </body>
 </html>`;
