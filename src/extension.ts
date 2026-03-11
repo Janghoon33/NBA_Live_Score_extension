@@ -249,12 +249,40 @@ function getPlayClock(play: EspnPlay): string {
   return play.clock?.displayValue ?? '';
 }
 
+function extractPlayerFromText(text: string): string {
+  if (!text) { return ''; }
+  // Team/game actions with no specific player
+  if (/^(team|jump ball|end of|start of|timeout|period|quarter|halftime)/i.test(text)) { return ''; }
+
+  const words = text.split(' ');
+  if (words.length < 2) { return ''; }
+
+  // Most player names are 2 words (First Last). Both should start with uppercase.
+  const first = words[0];
+  const second = words[1];
+  // Skip if first word is an action keyword
+  if (/^(defensive|offensive|personal|technical|flagrant|free|jump|end|start|makes|misses)/i.test(first)) {
+    return '';
+  }
+  if (/^[A-Z]/.test(first) && /^[A-Z']/.test(second)) {
+    // Handle 3-word names like "Kelly Oubre Jr." where 3rd word is "Jr." or "II" etc.
+    const third = words[2];
+    if (third && /^(Jr\.|Sr\.|II|III|IV)$/.test(third)) {
+      return `${first} ${second} ${third}`;
+    }
+    return `${first} ${second}`;
+  }
+  return '';
+}
+
 function getPlayerName(play: EspnPlay): string {
   return (
-    play.participants?.[0]?.athlete?.displayName ||
-    play.participants?.[0]?.athlete?.shortName ||
+    (play as any).participants?.[0]?.athlete?.displayName ||
+    (play as any).participants?.[0]?.athlete?.shortName ||
+    (play as any).participants?.[0]?.displayName ||
+    (play as any).athletes?.[0]?.displayName ||
     play.athletesInvolved?.[0]?.displayName ||
-    ''
+    extractPlayerFromText(play.text || '')
   );
 }
 
