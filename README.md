@@ -24,6 +24,7 @@
 - **스마트 자동 갱신** — 선택된 라이브 경기가 있을 때만 6초 타이머 작동, 없으면 자동 중지
 - **한국어 / 영어 지원** — 헤더의 KO / EN 버튼으로 즉시 전환
 - **선택 기억** — 선택한 경기는 VS Code를 재시작해도 유지 (날짜가 바뀌면 자동 초기화)
+- **기록지** - 기록지를 통해서 선수들의 득점/어시/리바 등 기록 확인 가능
 
 ---
 
@@ -64,10 +65,6 @@
 ### VS Code Marketplace에서 설치
 Extensions 패널(`Ctrl+Shift+X`)에서 **"NBA Live Score"** 검색 후 설치
 
-### VSIX 파일로 직접 설치
-```bash
-code --install-extension nba-live-score-*.vsix
-```
 
 ---
 
