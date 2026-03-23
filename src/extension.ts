@@ -43,7 +43,7 @@ interface EspnPlay {
   type?: { text?: string };
   scoringPlay?: boolean;
   scoreValue?: number;
-  participants?: Array<{ athlete?: { displayName?: string; shortName?: string } }>;
+  participants?: Array<{ athlete?: { id?: string; displayName?: string; shortName?: string } }>;
   athletesInvolved?: Array<{ displayName?: string }>;
   team?: { id?: string };
   period?: { number?: number } | number;
@@ -146,15 +146,35 @@ async function fetchStats(eventId: string): Promise<GameStats | null> {
   } catch { return null; }
 }
 
-async function fetchPlays(eventId: string): Promise<EspnPlay[]> {
+async function fetchPlays(eventId: string): Promise<{ plays: EspnPlay[]; roster: Map<string, string> }> {
   try {
     const json: any = await fetchData(ESPN_SUMMARY_BASE + eventId);
     const arr: any[] = Array.isArray(json.plays)
       ? json.plays
       : (json.plays?.items ?? []);
-    return arr.filter((p: any) => p.text?.trim()).slice(-15).reverse();
+    const plays = arr
+      .filter((p: any) => {
+        if (!p.text?.trim()) { return false; }
+        // Team rebounds are not credited to any player — skip them
+        const t = p.text.toLowerCase();
+        if (t.includes('team rebound') || t.includes('team offensive rebound')) { return false; }
+        return true;
+      })
+      .slice(-15).reverse();
+
+    // Build athleteId → teamId map from roster data (more reliable than play.team.id)
+    const roster = new Map<string, string>();
+    for (const r of (json.rosters ?? [])) {
+      const teamId = String(r.team?.id ?? '');
+      for (const a of (r.athletes ?? [])) {
+        const athleteId = String(a.athlete?.id ?? a.id ?? '');
+        if (athleteId && teamId) { roster.set(athleteId, teamId); }
+      }
+    }
+
+    return { plays, roster };
   } catch {
-    return [];
+    return { plays: [], roster: new Map() };
   }
 }
 
@@ -391,6 +411,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   private _selectedGames: Set<string>;
   private _events: EspnEvent[] = [];
   private _playMap = new Map<string, EspnPlay[]>();
+  private _rosterMap = new Map<string, Map<string, string>>(); // eventId → athleteId → teamId
   private _lastPlayText = new Map<string, string>(); // eventId -> most recent play text
   private _newPlayEventIds = new Set<string>();       // games with a freshly arrived play
   private _statsMap = new Map<string, GameStats | null>();  // eventId -> stats (null = no data)
@@ -497,8 +518,9 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       this._render();
       const ev = this._events.find((e) => e.id === eventId);
       if (ev?.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS') {
-        const plays = await fetchPlays(eventId);
+        const { plays, roster } = await fetchPlays(eventId);
         this._playMap.set(eventId, plays);
+        this._rosterMap.set(eventId, roster);
         this._lastPlayText.set(eventId, plays[0]?.text ?? '');
         // Start play timer if not already running
         if (!this._playTimer) { this._schedulePlaysNext(true); }
@@ -544,10 +566,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
       const liveSelected = this._liveSelectedEvents();
       if (liveSelected.length > 0) {
-        const plays = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
+        const results = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
         liveSelected.forEach((e, i) => {
-          this._playMap.set(e.id, plays[i]);
-          this._lastPlayText.set(e.id, plays[i][0]?.text ?? '');
+          this._playMap.set(e.id, results[i].plays);
+          this._rosterMap.set(e.id, results[i].roster);
+          this._lastPlayText.set(e.id, results[i].plays[0]?.text ?? '');
         });
       }
 
@@ -621,12 +644,12 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      const plays = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
+      const results = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
 
       let changed = false;
       this._newPlayEventIds.clear();
       liveSelected.forEach((e, i) => {
-        const newPlays = plays[i];
+        const { plays: newPlays, roster } = results[i];
         const newFirst = newPlays[0]?.text ?? '';
         const oldFirst = this._lastPlayText.get(e.id) ?? '';
         if (newFirst !== oldFirst) {
@@ -634,6 +657,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
           this._newPlayEventIds.add(e.id);
           this._lastPlayText.set(e.id, newFirst);
           this._playMap.set(e.id, newPlays);
+          this._rosterMap.set(e.id, roster);
         }
       });
 
@@ -748,12 +772,21 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       if (isSelected) {
         const plays = this._playMap.get(event.id) ?? [];
         if (isLive && plays.length > 0) {
+          const rosterMap = this._rosterMap.get(event.id);
           const rows = plays.map((play, idx) => {
             const { emoji, label, labelKo, labelClass, descKo } = classifyPlay(play);
             const player = getPlayerName(play);
             const period = getPlayPeriod(play);
             const clock = getPlayClock(play);
-            const teamId = String(play.team?.id ?? '');
+            // Prefer athlete→team lookup from roster (more reliable than play.team.id,
+            // which can point to the *fouled* team on free throws / foul plays)
+            const teamId = (() => {
+              for (const p of (play.participants ?? [])) {
+                const aid = String(p.athlete?.id ?? '');
+                if (aid && rosterMap?.has(aid)) { return rosterMap.get(aid)!; }
+              }
+              return String(play.team?.id ?? '');
+            })();
             const isHomePlay = teamId === home.team.id;
             const isAwayPlay = teamId === away.team.id;
             const teamLogo = isHomePlay ? home.team.logo
