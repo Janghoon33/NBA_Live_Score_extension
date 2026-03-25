@@ -810,11 +810,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             })();
             const isHomePlay = teamId === home.team.id;
             const isAwayPlay = teamId === away.team.id;
-            const teamLogo = isHomePlay ? home.team.logo
+            let teamLogo = isHomePlay ? home.team.logo
               : isAwayPlay ? away.team.logo : '';
-            const teamAbbr = isHomePlay ? home.team.abbreviation
+            let teamAbbr = isHomePlay ? home.team.abbreviation
               : isAwayPlay ? away.team.abbreviation : '';
-            const teamSide = isHomePlay ? 'home' : isAwayPlay ? 'away' : '';
+            let teamSide = isHomePlay ? 'home' : isAwayPlay ? 'away' : '';
             // Slide-in animation on the newest row when a new play arrived
             const newClass = (idx === 0 && hasNewPlay) ? ' new-play' : '';
 
@@ -832,9 +832,23 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             }
             const displayPlayer = isKo ? getPlayerNameKo(player) : player;
 
-            // Substitution: show IN/OUT rows
+            // Jump ball: show both players, no team attribution
+            const isJumpBall = labelClass === 'misc' && (play.text || '').toLowerCase().includes('jump ball');
+            if (isJumpBall) { teamLogo = ''; teamAbbr = ''; teamSide = ''; }
             let pBody: string;
-            if (labelClass === 'sub') {
+            if (isJumpBall) {
+              const jbText = play.text || '';
+              const vsMatch = jbText.match(/^Jump Ball\s+(.+?)\s+vs\.?\s+(.+?)$/i);
+              if (vsMatch) {
+                const p1 = isKo ? getPlayerNameKo(vsMatch[1].trim()) : vsMatch[1].trim();
+                const p2 = isKo ? getPlayerNameKo(vsMatch[2].trim()) : vsMatch[2].trim();
+                pBody = `<span class="p-player">${p1} vs. ${p2}</span>
+                  <span class="p-desc">${isKo ? '점프볼' : 'Jump Ball'}</span>`;
+              } else {
+                pBody = `<span class="p-player">${jbText}</span>
+                  <span class="p-desc">${isKo ? '점프볼' : 'Jump Ball'}</span>`;
+              }
+            } else if (labelClass === 'sub') {
               const { inPlayer, outPlayer } = extractSubPlayers(play);
               const inName  = isKo ? getPlayerNameKo(inPlayer)  : inPlayer;
               const outName = isKo ? getPlayerNameKo(outPlayer) : outPlayer;
@@ -1124,6 +1138,7 @@ body {
 .p-emoji-img { width: 16px; height: 16px; flex-shrink: 0; object-fit: contain; }
 .p-body {
   display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0;
+  overflow-x: auto;
 }
 .p-player {
   font-size: 10px; font-weight: 700; color: #ddd;
