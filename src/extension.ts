@@ -238,6 +238,12 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '패스 실수' };
   if (t.includes('lost ball'))
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '볼 분실' };
+  if (t.includes('offensive charge') || t.includes('charge'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '오펜시브 차지' };
+  if (t.includes('traveling') || t.includes('travel'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '트래블링' };
+  if (t.includes('out of bounds') || t.includes('out-of-bounds'))
+    return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '아웃 오브 바운즈' };
   if (t.includes('turnover'))
     return { emoji: '🔄', label: 'TURNOVER',  labelKo: '턴오버',    labelClass: 'to',    descKo: '턴오버' };
   // Defense
@@ -315,6 +321,19 @@ function extractPlayerFromText(text: string): string {
       return `${first} ${second} ${third}`;
     }
     return `${first} ${second}`;
+  }
+  // Handle names with lowercase middle parts (e.g. "Tristan da Silva", "Shai Gilgeous-Alexander")
+  if (/^[A-Z]/.test(first) && words.length >= 3) {
+    // Find the last uppercase-starting word that completes the name
+    for (let i = 2; i < Math.min(words.length, 4); i++) {
+      if (/^[A-Z]/.test(words[i])) {
+        const suffix = words[i + 1];
+        if (suffix && /^(Jr\.|Sr\.|II|III|IV)$/.test(suffix)) {
+          return words.slice(0, i + 2).join(' ');
+        }
+        return words.slice(0, i + 1).join(' ');
+      }
+    }
   }
   return '';
 }
@@ -481,11 +500,12 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _liveSelectedEvents(): EspnEvent[] {
-    return this._events.filter(
-      (e) =>
-        this._selectedGames.has(e.id) &&
-        e.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS'
-    );
+    return this._events.filter((e) => {
+      if (!this._selectedGames.has(e.id)) { return false; }
+      const s = e.competitions[0]?.status?.type?.name;
+      // Include halftime, end-of-period, etc. — anything that isn't final or scheduled
+      return s !== 'STATUS_FINAL' && s !== 'STATUS_SCHEDULED';
+    });
   }
 
   private _getEventStatus(eventId: string): string {
@@ -517,7 +537,8 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       this._selectedGames.add(eventId);
       this._render();
       const ev = this._events.find((e) => e.id === eventId);
-      if (ev?.competitions[0]?.status?.type?.name === 'STATUS_IN_PROGRESS') {
+      const evStatus = ev?.competitions[0]?.status?.type?.name;
+      if (evStatus && evStatus !== 'STATUS_FINAL' && evStatus !== 'STATUS_SCHEDULED') {
         const { plays, roster } = await fetchPlays(eventId);
         this._playMap.set(eventId, plays);
         this._rosterMap.set(eventId, roster);
