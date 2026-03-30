@@ -188,7 +188,7 @@ interface PlayDisplay {
 }
 
 function classifyPlay(play: EspnPlay): PlayDisplay {
-  const t = (play.text || '').toLowerCase();
+  const t = ((play.text || '') + ' ' + (play.type?.text || '')).toLowerCase();
   const scoring = play.scoringPlay ?? false;
 
   // 3-pointers
@@ -272,7 +272,7 @@ function classifyPlay(play: EspnPlay): PlayDisplay {
     else if (t.includes('overtime') || t.includes(' ot')) descKo = '연장 종료';
     return { emoji: '🔔', label: '', labelKo: '', labelClass: 'misc', descKo };
   }
-  if (t.includes('jump ball'))
+  if (t.includes('jump ball') || t.includes('jumpball'))
     return { emoji: '⚡', label: 'JUMP BALL', labelKo: '점프볼',    labelClass: 'misc',  descKo: '점프볼' };
   if (t.includes('violation'))
     return { emoji: '🚷', label: 'VIOLATION', labelKo: '바이얼레이션', labelClass: 'misc', descKo: '룰 위반' };
@@ -833,19 +833,28 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
             const displayPlayer = isKo ? getPlayerNameKo(player) : player;
 
             // Jump ball: show both players, no team attribution
-            const isJumpBall = labelClass === 'misc' && (play.text || '').toLowerCase().includes('jump ball');
+            const isJumpBall = labelClass === 'misc' &&
+              ((play.text || '') + ' ' + (play.type?.text || '')).toLowerCase().includes('jump ball');
             if (isJumpBall) { teamLogo = ''; teamAbbr = ''; teamSide = ''; }
             let pBody: string;
             if (isJumpBall) {
               const jbText = play.text || '';
-              const vsMatch = jbText.match(/^Jump Ball\s+(.+?)\s+vs\.?\s+(.+?)$/i);
+              // Extract "Tip to X" if present (e.g. "... vs. Gafford: Tip to Smith")
+              const tipMatch = jbText.match(/[:\-]\s*Tip to\s+(.+)$/i);
+              const tipPlayer = tipMatch ? tipMatch[1].trim() : '';
+              const mainText = tipMatch ? jbText.slice(0, tipMatch.index).trim() : jbText;
+              // ESPN may send "Jump Ball X vs. Y" or just "X vs. Y" (with type.text = "jumpball")
+              const vsMatch = mainText.match(/(?:Jump Ball\s+)?(.+?)\s+vs\.?\s+(.+?)$/i);
+              const tipLabel = tipPlayer
+                ? ` → ${isKo ? getPlayerNameKo(tipPlayer) : tipPlayer}`
+                : '';
               if (vsMatch) {
                 const p1 = isKo ? getPlayerNameKo(vsMatch[1].trim()) : vsMatch[1].trim();
                 const p2 = isKo ? getPlayerNameKo(vsMatch[2].trim()) : vsMatch[2].trim();
-                pBody = `<span class="p-player">${p1} vs. ${p2}</span>
+                pBody = `<span class="p-player">${p1} vs. ${p2}${tipLabel}</span>
                   <span class="p-desc">${isKo ? '점프볼' : 'Jump Ball'}</span>`;
               } else {
-                pBody = `<span class="p-player">${jbText}</span>
+                pBody = `<span class="p-player">${mainText}${tipLabel}</span>
                   <span class="p-desc">${isKo ? '점프볼' : 'Jump Ball'}</span>`;
               }
             } else if (labelClass === 'sub') {
