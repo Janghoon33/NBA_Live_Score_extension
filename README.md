@@ -44,26 +44,10 @@
 
 ## 미리보기
 
-```
-🏀 월, 4월 5일 · 오후 7:30                           ↻
+<img width="357" height="427" alt="image" src="https://github.com/user-attachments/assets/b0947335-e300-4753-b315-9441e57d6318" />
+<img width="341" height="423" alt="image" src="https://github.com/user-attachments/assets/796ca6af-5753-47e8-b294-2a0a31c6d36d" />
 
-오늘 8경기            ★ 2경기 시청 중
 
-★ [DAL] DAL  -  |  예정  |  -  SAS  [SAS]  홈
-          경기 시작: 오후 8:00
-          시작 후 자동으로 중계가 표시됩니다
-
-★ [LAL] LAL 98  |  Q2 🔴  |  102  BOS  [BOS]  홈
-                    7:20
-        르브론 제임스 vs. 제이슨 테이텀
-        점프볼
-
-  [LAL] 🤟  르브론 제임스      THREE!     Q2 7:15
-  [BOS] ❌  제이슨 테이텀      3PT MISS   Q2 7:05
-  [LAL] 💪  앤써니 데이비스     OFF REB    Q2 7:04
-  [BOS] 🚫  알 호포드         BLOCK      Q2 6:55
-  [LAL] 🔄  러셀 웨스트브룩    오펜시브차지  Q2 6:40
-```
 
 ---
 
