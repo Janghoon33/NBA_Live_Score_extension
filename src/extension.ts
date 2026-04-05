@@ -1248,6 +1248,18 @@ body {
     function setLang(lang) { vscode.postMessage({ command: 'setLang', lang }); }
     function toggleStats(id) { vscode.postMessage({ command: 'toggleStats', eventId: id }); }
 
+    // Restore scroll position after re-render
+    (function restoreScroll() {
+      const prev = vscode.getState();
+      if (prev && typeof prev.scrollTop === 'number') {
+        document.documentElement.scrollTop = prev.scrollTop;
+      }
+      // Persist scroll position on every scroll event
+      document.addEventListener('scroll', () => {
+        vscode.setState({ scrollTop: document.documentElement.scrollTop });
+      }, { passive: true });
+    })();
+
     // Drag-to-scroll for stats tables
     document.addEventListener('mousedown', (e) => {
       const el = e.target.closest('.stats-scroll');
