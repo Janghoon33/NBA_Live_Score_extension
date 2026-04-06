@@ -585,22 +585,23 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
         if (!validIds.has(id)) { this._selectedGames.delete(id); }
       }
 
-      const liveSelected = this._liveSelectedEvents();
-      if (liveSelected.length > 0) {
-        const results = await Promise.all(liveSelected.map((e) => fetchPlays(e.id)));
-        liveSelected.forEach((e, i) => {
+      // On manual refresh: update plays for all selected games, regardless of status
+      const allSelected = [...this._selectedGames]
+        .map((id) => this._events.find((e) => e.id === id))
+        .filter((e) => !!e) as EspnEvent[];
+      if (allSelected.length > 0) {
+        const results = await Promise.all(allSelected.map((e) => fetchPlays(e.id)));
+        allSelected.forEach((e, i) => {
           this._playMap.set(e.id, results[i].plays);
           this._rosterMap.set(e.id, results[i].roster);
           this._lastPlayText.set(e.id, results[i].plays[0]?.text ?? '');
         });
       }
 
-      // Update stats for all expanded panels on full refresh
-      const expandedToUpdate = [...this._expandedStats].filter((id) => {
-        const status = this._getEventStatus(id);
-        if (status === 'STATUS_FINAL') return !this._finalStatsUpdated.has(id);
-        return status === 'STATUS_IN_PROGRESS';
-      });
+      const liveSelected = this._liveSelectedEvents();
+
+      // Update stats for all expanded panels on full refresh, regardless of status
+      const expandedToUpdate = [...this._expandedStats];
       await this._updateStatsFor(expandedToUpdate);
 
       this._render();
@@ -1250,13 +1251,18 @@ body {
 
     // Restore scroll position after re-render
     (function restoreScroll() {
-      const prev = vscode.getState();
-      if (prev && typeof prev.scrollTop === 'number') {
-        document.documentElement.scrollTop = prev.scrollTop;
-      }
+      const prev = vscode.getState() || {};
+      // Delay restore to ensure DOM is fully rendered
+      requestAnimationFrame(() => {
+        if (typeof prev.scrollTop === 'number' && prev.scrollTop > 0) {
+          document.documentElement.scrollTop = prev.scrollTop;
+          document.body.scrollTop = prev.scrollTop;
+        }
+      });
       // Persist scroll position on every scroll event
       document.addEventListener('scroll', () => {
-        vscode.setState({ scrollTop: document.documentElement.scrollTop });
+        const st = document.documentElement.scrollTop || document.body.scrollTop;
+        vscode.setState({ scrollTop: st });
       }, { passive: true });
     })();
 
