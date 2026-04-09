@@ -1252,13 +1252,23 @@ body {
     // Restore scroll position after re-render
     (function restoreScroll() {
       const prev = vscode.getState() || {};
-      // Delay restore to ensure DOM is fully rendered
-      requestAnimationFrame(() => {
-        if (typeof prev.scrollTop === 'number' && prev.scrollTop > 0) {
-          document.documentElement.scrollTop = prev.scrollTop;
-          document.body.scrollTop = prev.scrollTop;
-        }
-      });
+      if (typeof prev.scrollTop === 'number' && prev.scrollTop > 0) {
+        const target = prev.scrollTop;
+        // Double-rAF ensures layout is complete before restoring
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            document.documentElement.scrollTop = target;
+            document.body.scrollTop = target;
+            // Fallback: if rAF wasn't enough, retry after a short delay
+            setTimeout(() => {
+              if (document.documentElement.scrollTop < target - 5) {
+                document.documentElement.scrollTop = target;
+                document.body.scrollTop = target;
+              }
+            }, 50);
+          });
+        });
+      }
       // Persist scroll position on every scroll event
       document.addEventListener('scroll', () => {
         const st = document.documentElement.scrollTop || document.body.scrollTop;
