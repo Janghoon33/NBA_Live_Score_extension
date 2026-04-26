@@ -16,6 +16,7 @@ const ESPN_SUMMARY_BASE =
 // ── Intervals ─────────────────────────────────────────────────
 const SCORE_INTERVAL_MS = 20_000;  // 20s: scoreboard
 const PLAY_INTERVAL_MS  =  6_000;  // 6s: play-by-play (selected live games only)
+const FINAL_PLAY_RETENTION_MS = 5 * 60_000; // 5m: keep final-game plays visible
 
 // ── Interfaces ────────────────────────────────────────────────
 interface EspnTeam {
@@ -427,12 +428,15 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _scoreTimer?: NodeJS.Timeout;
   private _playTimer?: NodeJS.Timeout;
+  private _finalPlayTimer?: NodeJS.Timeout;
   private _selectedGames: Set<string>;
   private _events: EspnEvent[] = [];
   private _playMap = new Map<string, EspnPlay[]>();
   private _rosterMap = new Map<string, Map<string, string>>(); // eventId → athleteId → teamId
   private _lastPlayText = new Map<string, string>(); // eventId -> most recent play text
   private _newPlayEventIds = new Set<string>();       // games with a freshly arrived play
+  private _finalPlayRetainUntil = new Map<string, number>(); // eventId -> timestamp
+  private _finalPlaysFetched = new Set<string>();            // eventId -> final plays fetched once
   private _statsMap = new Map<string, GameStats | null>();  // eventId -> stats (null = no data)
   private _statsLoading = new Set<string>();                // eventId -> currently fetching
   private _expandedStats = new Set<string>();              // eventId -> stats panel open
@@ -468,6 +472,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       if (this._scoreTimer) { clearTimeout(this._scoreTimer); }
       if (this._playTimer)  { clearTimeout(this._playTimer); }
+      if (this._finalPlayTimer) { clearTimeout(this._finalPlayTimer); }
     });
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
@@ -499,6 +504,32 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private _scheduleFinalPlayClear() {
+    if (this._finalPlayTimer) {
+      clearTimeout(this._finalPlayTimer);
+      this._finalPlayTimer = undefined;
+    }
+    const now = Date.now();
+    const nextExpiry = Math.min(
+      ...[...this._finalPlayRetainUntil.values()].filter((until) => until > now)
+    );
+    if (Number.isFinite(nextExpiry)) {
+      this._finalPlayTimer = setTimeout(() => {
+        this._expireFinalPlayRetention();
+        this._render();
+        this._scheduleFinalPlayClear();
+      }, Math.max(0, nextExpiry - now));
+    }
+  }
+
+  private _expireFinalPlayRetention(now = Date.now()) {
+    for (const [id, retainUntil] of this._finalPlayRetainUntil) {
+      if (retainUntil <= now) {
+        this._finalPlayRetainUntil.delete(id);
+      }
+    }
+  }
+
   private _liveSelectedEvents(): EspnEvent[] {
     return this._events.filter((e) => {
       if (!this._selectedGames.has(e.id)) { return false; }
@@ -510,6 +541,37 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
   private _getEventStatus(eventId: string): string {
     return this._events.find((e) => e.id === eventId)?.competitions[0]?.status?.type?.name ?? '';
+  }
+
+  private _isFinalPlayRetained(eventId: string): boolean {
+    const retainUntil = this._finalPlayRetainUntil.get(eventId) ?? 0;
+    return retainUntil > Date.now();
+  }
+
+  private async _refreshFinalSelectedPlays(): Promise<void> {
+    this._expireFinalPlayRetention();
+    const finalSelected = this._events.filter((e) =>
+      this._selectedGames.has(e.id) &&
+      e.competitions[0]?.status?.type?.name === 'STATUS_FINAL' &&
+      !this._finalPlaysFetched.has(e.id)
+    );
+    if (finalSelected.length === 0) {
+      this._scheduleFinalPlayClear();
+      return;
+    }
+
+    const results = await Promise.all(finalSelected.map((e) => fetchPlays(e.id)));
+    finalSelected.forEach((e, i) => {
+      const { plays, roster } = results[i];
+      this._playMap.set(e.id, plays);
+      this._rosterMap.set(e.id, roster);
+      this._lastPlayText.set(e.id, plays[0]?.text ?? '');
+      this._finalPlaysFetched.add(e.id);
+      if (plays.length > 0 && !this._finalPlayRetainUntil.has(e.id)) {
+        this._finalPlayRetainUntil.set(e.id, Date.now() + FINAL_PLAY_RETENTION_MS);
+      }
+    });
+    this._scheduleFinalPlayClear();
   }
 
   // Fetch and store stats for given ids; mark FINAL ones in _finalStatsUpdated
@@ -530,7 +592,11 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       // Remove: update state and render immediately — no async before render
       this._selectedGames.delete(eventId);
       this._playMap.delete(eventId);
+      this._rosterMap.delete(eventId);
       this._lastPlayText.delete(eventId);
+      this._finalPlayRetainUntil.delete(eventId);
+      this._finalPlaysFetched.delete(eventId);
+      this._scheduleFinalPlayClear();
       this._render();
     } else {
       // Add: show star on instantly, then load plays
@@ -582,7 +648,14 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
       const validIds = new Set(this._events.map((e) => e.id));
       for (const id of this._selectedGames) {
-        if (!validIds.has(id)) { this._selectedGames.delete(id); }
+        if (!validIds.has(id)) {
+          this._selectedGames.delete(id);
+          this._playMap.delete(id);
+          this._rosterMap.delete(id);
+          this._lastPlayText.delete(id);
+          this._finalPlayRetainUntil.delete(id);
+          this._finalPlaysFetched.delete(id);
+        }
       }
 
       // On manual refresh: update plays for all selected games, regardless of status
@@ -599,6 +672,7 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       }
 
       const liveSelected = this._liveSelectedEvents();
+      await this._refreshFinalSelectedPlays();
 
       // Update stats for all expanded panels on full refresh, regardless of status
       const expandedToUpdate = [...this._expandedStats];
@@ -628,8 +702,17 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
 
       const validIds = new Set(this._events.map((e) => e.id));
       for (const id of this._selectedGames) {
-        if (!validIds.has(id)) { this._selectedGames.delete(id); }
+        if (!validIds.has(id)) {
+          this._selectedGames.delete(id);
+          this._playMap.delete(id);
+          this._rosterMap.delete(id);
+          this._lastPlayText.delete(id);
+          this._finalPlayRetainUntil.delete(id);
+          this._finalPlaysFetched.delete(id);
+        }
       }
+
+      await this._refreshFinalSelectedPlays();
 
       // Update stats for all expanded panels every 20s (fav + non-fav), final games get one last update
       const expandedToUpdate = [...this._expandedStats].filter((id) => {
@@ -793,7 +876,8 @@ export class NbaScoreViewProvider implements vscode.WebviewViewProvider {
       let playFeedHtml = '';
       if (isSelected) {
         const plays = this._playMap.get(event.id) ?? [];
-        if (isLive && plays.length > 0) {
+        const shouldShowPlays = plays.length > 0 && (isLive || (isFinal && this._isFinalPlayRetained(event.id)));
+        if (shouldShowPlays) {
           const rosterMap = this._rosterMap.get(event.id);
           const rows = plays.map((play, idx) => {
             const { emoji, label, labelKo, labelClass, descKo } = classifyPlay(play);
